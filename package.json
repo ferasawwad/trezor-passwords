@@ -1,0 +1,20 @@
+{
+  "name": "trezor-passwords",
+  "version": "1.0.0",
+  "description": "Trezor Password Manager CLI",
+  "main": "index.js",
+  "author": "Maido<m@maido.io>",
+  "license": "MIT",
+  "private": false,
+  "dependencies": {
+    "trezor-connect": "^5.0.33"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "rimraf dist/ && babel ./ --out-dir dist/ --ignore ./node_modules,./.babelrc,./package.json,./npm-debug.log --copy-files",
+    "start": "npm run build && node dist/index.js"
+  },
+  "devDependencies": {
+    "@babel/preset-env": "^7.1.0"
+  }
+}
