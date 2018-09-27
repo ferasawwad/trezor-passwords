@@ -4,6 +4,9 @@ import { hmac } from 'fast-sha256';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import url from 'url';
+
+const BIP32_PATH = [(10016 | 0x80000000) >>> 0, 0];
 
 export class TrezorDevice {
   constructor(input, output, debug) {
@@ -19,9 +22,8 @@ export class TrezorDevice {
     const device = await this.device;
     const result = await device
       .waitForSessionAndRun(async session => {
-        const path = [(10016 | 0x80000000) >>> 0, 0];
         const { message } = await session.cipherKeyValue(
-          path,
+          BIP32_PATH,
           'Activate TREZOR Password Manager?',
           '2d650551248d792eabf628f451200d7f51cb63e46aadcbb1038aacb05e8c8aee2d650551248d792eabf628f451200d7f51cb63e46aadcbb1038aacb05e8c8aee',
           true,
@@ -34,7 +36,7 @@ export class TrezorDevice {
     return result;
   }
 
-  async getEncryptionData(masterKey) {
+  getEncryptionData(masterKey) {
     const fileKey = masterKey.substring(0, masterKey.length / 2);
     const encryptionKey = masterKey.substring(
       masterKey.length / 2,
@@ -50,7 +52,7 @@ export class TrezorDevice {
     ];
   }
 
-  async decryptStorage(fileName, encryptionKey) {
+  decryptStorage(fileName, encryptionKey) {
     const filepath = path.join(
       process.env.HOME,
       '/Dropbox/Apps/TREZOR Password Manager/',
@@ -66,13 +68,93 @@ export class TrezorDevice {
     });
     decipher.setAuthTag(tag);
 
-    let decrypted;
+    let decrypted = '';
     for (let i = 12 + 16; i < content.length; i += 16) {
       const slice = content.slice(i, i + 16);
       decrypted += decipher.update(slice, null, 'utf8');
     }
     decrypted += decipher.final('utf8');
+    return JSON.parse(decrypted);
+  }
+
+  async decryptEntry(decrypted) {
+    return new Promise((resolve, reject) => {
+      this.rl.question(
+        'Which entry you want?(blank to exit): ',
+        async answer => {
+          if (!Number.parseInt(answer)) {
+            console.log('Answer not number, exiting');
+            reject();
+          }
+          const entry = decrypted.entries[answer];
+          const nonce = await this.getDecryptedNonce(entry);
+
+          const pwdArr = entry['password']['data'];
+          console.log(
+            'password: ',
+            await this.decryptEntryValue(nonce, Buffer.from(pwdArr))
+          );
+
+          const safeNoteArr = entry['safe_note']['data'];
+          console.log(
+            'safe_note:',
+            await this.decryptEntryValue(nonce, Buffer.from(safeNoteArr))
+          );
+          resolve();
+        }
+      );
+    });
+  }
+
+  async decryptEntryValue(nonce, hexValue) {
+    const iv = hexValue.slice(0, 12);
+    const tag = hexValue.slice(12, 12 + 16);
+
+    const key = Buffer.from(nonce, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, {
+      authTagLength: 16,
+    });
+    decipher.setAuthTag(tag);
+
+    let decrypted = '';
+    for (let i = 12 + 16; i < hexValue.length; i += 16) {
+      const slice = hexValue.slice(i, i + 16);
+      decrypted += decipher.update(slice, null, 'utf8');
+    }
+    decrypted += decipher.final('utf8');
     return decrypted;
+  }
+
+  async getDecryptedNonce(entry) {
+    let item;
+    if (entry['item']) {
+      item = entry['item'];
+    } else {
+      item = entry['title'];
+    }
+
+    const pr = url.parse(item);
+    if (pr.scheme && pr.host) {
+      item = pr.host;
+    }
+
+    const ENC_KEY = `Unlock ${item} for user ${entry['username']}?`;
+    const ENC_VALUE = entry['nonce'];
+    const device = await this.device;
+    const result = await device
+      .waitForSessionAndRun(async session => {
+        const { message } = await session.cipherKeyValue(
+          BIP32_PATH,
+          ENC_KEY,
+          Buffer.from(ENC_VALUE, 'hex'),
+          false,
+          false,
+          true
+        );
+        return message.value;
+      })
+      .catch(console.log);
+    return result;
   }
 
   close() {
@@ -99,9 +181,12 @@ export class TrezorDevice {
         }
 
         function handlePin(type, cb) {
-          rl.question('Please enter PIN: ', answer => {
-            cb(null, answer);
-          });
+          rl.question(
+            'Please enter PIN\n_______\n|7|8|9|\n|4|5|6|\n|1|2|3|\n\u203E\u203E\u203E\u203E\u203E\u203E\u203E\nUse the table instead of actual numbers:',
+            answer => {
+              cb(null, answer);
+            }
+          );
         }
 
         function handlePass(cb) {
