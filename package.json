@@ -7,6 +7,7 @@
   "license": "MIT",
   "private": false,
   "dependencies": {
+    "fast-sha256": "^1.1.0",
     "trezor-connect": "^5.0.33",
     "trezor.js": "^6.17.6"
   },
